@@ -122,6 +122,17 @@ I219vEvtDeviceAdd(
     RtlZeroMemory(deviceContext, sizeof(I219V_DEVICE_CONTEXT));
     deviceContext->Device = device;
 
+    // Инициализация блокировки для игровых настроек
+    WDF_OBJECT_ATTRIBUTES lockAttributes;
+    WDF_OBJECT_ATTRIBUTES_INIT(&lockAttributes);
+    lockAttributes.ParentObject = device; // Связываем блокировку с устройством для автоматической очистки
+
+    status = WdfSpinLockCreate(&lockAttributes, &deviceContext->GamingSettingsLock);
+    if (!NT_SUCCESS(status)) {
+        TraceEvents(TRACE_LEVEL_ERROR, TRACE_DRIVER, "WdfSpinLockCreate failed for GamingSettingsLock: %!STATUS!", status);
+        goto Exit;
+    }
+
     // Инициализация устройства
     status = I219vInitializeDevice(deviceContext);
     if (!NT_SUCCESS(status)) {
@@ -217,17 +228,13 @@ I219vRegisterAdapterCallbacks(
 
     TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "Registering adapter callbacks");
 
-    // Установка обратных вызовов адаптера
-    NetAdapterInitSetLinkLayerCapabilitiesCallback(AdapterInit, I219vEvtAdapterSetLinkLayerCapabilities, DeviceContext);
-    NetAdapterInitSetLinkLayerAddressCallback(AdapterInit, I219vEvtAdapterSetLinkLayerAddress, DeviceContext);
-    NetAdapterInitSetPowerCapabilitiesCallback(AdapterInit, I219vEvtAdapterSetPowerCapabilities, DeviceContext);
-    NetAdapterInitSetReceiveCapabilitiesCallback(AdapterInit, I219vEvtAdapterSetReceiveCapabilities, DeviceContext);
-    NetAdapterInitSetOffloadCapabilitiesCallback(AdapterInit, I219vEvtAdapterSetOffloadCapabilities, DeviceContext);
-    NetAdapterInitSetCurrentLinkStateCallback(AdapterInit, I219vEvtAdapterSetCurrentLinkState, DeviceContext);
-    NetAdapterInitSetPermanentLinkLayerAddressCallback(AdapterInit, I219vEvtAdapterSetPermanentLinkLayerAddress, DeviceContext);
-    NetAdapterInitSetDmaCapabilitiesCallback(AdapterInit, I219vEvtAdapterSetDmaCapabilities, DeviceContext);
-
-    // Установка обработчиков событий адаптера
+    // Установка обратных вызовов жизненного цикла адаптера
+    // Главный обработчик установки возможностей (теперь в Adapter.c)
+    NetAdapterInitSetAdapterSetCapabilitiesCallback(AdapterInit, I219vEvtAdapterSetCapabilities);
+    // Обработчики Start/Stop (теперь в Adapter.c)
+    NetAdapterInitSetAdapterStartCallback(AdapterInit, I219vEvtAdapterStart);
+    NetAdapterInitSetAdapterStopCallback(AdapterInit, I219vEvtAdapterStop);
+    // Обработчики Pause/Restart (уже были в Adapter.c и зарегистрированы)
     status = NetAdapterInitSetPauseCallback(AdapterInit, I219vEvtAdapterPause, DeviceContext);
     if (!NT_SUCCESS(status)) {
         TraceEvents(TRACE_LEVEL_ERROR, TRACE_DRIVER, "NetAdapterInitSetPauseCallback failed: %!STATUS!", status);
@@ -240,57 +247,30 @@ I219vRegisterAdapterCallbacks(
         return status;
     }
 
-    // Инициализация возможностей адаптера
-    NET_ADAPTER_LINK_LAYER_CAPABILITIES_INIT(&linkLayerCapabilities, NdisMedium802_3, 1500);
-    NET_ADAPTER_LINK_LAYER_ADDRESS_INIT(&linkLayerAddress, DeviceContext->MacAddress, 6);
-    NET_ADAPTER_POWER_CAPABILITIES_INIT(&powerCapabilities);
-    NET_ADAPTER_DMA_CAPABILITIES_INIT(&dmaCapabilities);
-    NET_ADAPTER_RECEIVE_CAPABILITIES_INIT(&receiveCapabilities);
-    NET_ADAPTER_OFFLOAD_CAPABILITIES_INIT(&offloadCapabilities);
+    // Статические возможности (например, MAC-адрес, если он известен до создания NETADAPTER)
+    // больше не устанавливаются здесь. Они будут установлены в I219vEvtAdapterSetCapabilities
+    // или через специфичные для них обратные вызовы, если таковые используются (например, MAC-адрес).
+    // I219vEvtAdapterSetLinkLayerAddress и I219vEvtAdapterSetPermanentLinkLayerAddress
+    // по-прежнему могут быть зарегистрированы отдельно, если это необходимо для установки MAC-адреса
+    // до того, как основной EvtAdapterSetCapabilities будет вызван, или для обновления.
+    // Однако, если EvtAdapterSetCapabilities устанавливает все, то эти статические вызовы здесь могут быть избыточны.
+    // Для данной консолидации, предполагается, что EvtAdapterSetCapabilities управляет всем.
+    // Но MAC адрес часто устанавливается через NetAdapterInitSetCurrentLinkLayerAddress / NetAdapterInitSetPermanentLinkLayerAddress
+    // Так как DeviceContext->MacAddress известен на этом этапе.
 
-    // Настройка возможностей адаптера
-    linkLayerCapabilities.MaximumMulticastListSize = 16;
-    linkLayerCapabilities.SupportedPacketFilters = 
-        NetPacketFilterFlagDirected |
-        NetPacketFilterFlagMulticast |
-        NetPacketFilterFlagBroadcast |
-        NetPacketFilterFlagPromiscuous |
-        NetPacketFilterFlagAllMulticast;
+    // Установка MAC-адреса (пример сохранения, если это необходимо до EvtAdapterSetCapabilities)
+    // Эти функции также могут быть частью EvtAdapterSetCapabilities если логика этого требует.
+    // Для ясности, оставим их здесь, так как они специфичны и не являются "общими" возможностями.
+    NetAdapterInitSetLinkLayerAddressCallback(AdapterInit, I219vEvtAdapterSetLinkLayerAddress, DeviceContext);
+    NetAdapterInitSetPermanentLinkLayerAddressCallback(AdapterInit, I219vEvtAdapterSetPermanentLinkLayerAddress, DeviceContext);
+    // Также CurrentLinkState часто является отдельным коллбэком.
+    NetAdapterInitSetCurrentLinkStateCallback(AdapterInit, I219vEvtAdapterSetCurrentLinkState, DeviceContext);
 
-    powerCapabilities.SupportedWakePatterns =
-        NetWakePatternFlagBitmapPattern |
-        NetWakePatternFlagMagicPacket;
 
-    // Настройка возможностей DMA
-    dmaCapabilities.MaximumPhysicalAddress.QuadPart = MAXULONG64;
-    dmaCapabilities.PreferredNode = MM_ANY_NODE_OK;
+    // Большинство NetAdapterSetXxxCapabilities (статических) удалено отсюда,
+    // так как они теперь должны быть установлены в рамках коллбэка I219vEvtAdapterSetCapabilities.
 
-    // Настройка возможностей приема
-    receiveCapabilities.MaximumReceiveQueueCount = 1;
-    receiveCapabilities.MaximumReceiveQueueGroupCount = 1;
-
-    // Настройка возможностей оффлоадов
-    offloadCapabilities.SupportedChecksumOffloads =
-        NetAdapterOffloadChecksumFlagIPv4Transmit |
-        NetAdapterOffloadChecksumFlagTcpTransmit |
-        NetAdapterOffloadChecksumFlagUdpTransmit |
-        NetAdapterOffloadChecksumFlagIPv4Receive |
-        NetAdapterOffloadChecksumFlagTcpReceive |
-        NetAdapterOffloadChecksumFlagUdpReceive;
-
-    offloadCapabilities.SupportedLsoOffloads =
-        NetAdapterOffloadLsoFlagIPv4 |
-        NetAdapterOffloadLsoFlagIPv6;
-
-    // Установка возможностей адаптера
-    NetAdapterSetLinkLayerCapabilities(AdapterInit, &linkLayerCapabilities);
-    NetAdapterSetLinkLayerAddress(AdapterInit, &linkLayerAddress);
-    NetAdapterSetPowerCapabilities(AdapterInit, &powerCapabilities);
-    NetAdapterSetDmaCapabilities(AdapterInit, &dmaCapabilities);
-    NetAdapterSetReceiveCapabilities(AdapterInit, &receiveCapabilities);
-    NetAdapterSetOffloadCapabilities(AdapterInit, &offloadCapabilities);
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "Adapter callbacks registered successfully");
+    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_DRIVER, "Adapter callbacks registered successfully (consolidated)");
     return STATUS_SUCCESS;
 }
 
