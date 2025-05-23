@@ -70,4 +70,7 @@ typedef struct _I219V_DEVICE_CONTEXT {
     UINT32 BackgroundTrafficCount;         // Счетчик фонового трафика
     UINT64 LastPerformanceUpdateTime;      // Время последнего обновления статистики производительности
 
+    // Синхронизация для игровых настроек и статистики
+    WDFSPINLOCK GamingSettingsLock;        // Блокировка для защиты доступа к игровым настройкам и статистике
+
 } I219V_DEVICE_CONTEXT, *PI219V_DEVICE_CONTEXT;

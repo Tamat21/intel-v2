@@ -8,8 +8,13 @@ Module Name:
 
 Abstract:
 
-    Реализация функций для настройки и конфигурации NetAdapter
-    Содержит обработчики событий и настройку возможностей адаптера
+    This file previously contained functions for configuring and creating the NetAdapter.
+    This logic has been consolidated into Driver.c (for NetAdapter_Init allocation and NetAdapterCreate)
+    and Adapter.c (for the implementations of NetAdapter event callbacks like EvtAdapterSetCapabilities,
+    EvtAdapterStart, EvtAdapterStop, EvtAdapterPause, EvtAdapterRestart).
+
+    This file is now largely empty or could be removed if no other utility functions
+    specific to NetAdapter configuration reside here.
 
 Environment:
 
@@ -29,314 +34,21 @@ Environment:
 #include "DeviceContext.h"
 #include "Trace.h"
 
-// Обработчик создания NetAdapter
-NTSTATUS
-I219vCreateNetAdapter(
-    _In_ WDFDEVICE Device
-    )
-{
-    NTSTATUS status;
-    PI219V_DEVICE_CONTEXT deviceContext;
-    NET_ADAPTER_CONFIG netAdapterConfig;
-    NETADAPTER netAdapter;
+// All substantive functions previously in this file (I219vCreateNetAdapter,
+// I219vEvtAdapterSetCapabilities, I219vEvtAdapterStart, I219vEvtAdapterStop)
+// have been moved or their logic integrated into Adapter.c and Driver.c
+// to consolidate the NetAdapter initialization path.
 
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_ADAPTER, "Creating NetAdapter");
+// If I219vInitializeInterrupt was only used by the old I219vEvtAdapterStart in this file,
+// and is not called from the new consolidated I219vEvtAdapterStart (now in Adapter.c),
+// it might also be orphaned. For now, its definition is assumed to be elsewhere if still needed
+// (e.g. in i219v_hw.c or similar, and called during device D0Entry or PrepareHardware).
+// The call to I219vInitializeInterrupt was commented out in the consolidated I219vEvtAdapterStart.
+// If it's truly unused, it should be removed from its definition file.
+// If it IS used by the new Start, its prototype needs to be available in Adapter.c.
+// For this refactoring, we assume I219vInitializeInterrupt is handled elsewhere (e.g. D0Entry).
 
-    deviceContext = I219vGetDeviceContext(Device);
-    deviceContext->Device = Device;
-
-    // Инициализация конфигурации NetAdapter
-    NET_ADAPTER_CONFIG_INIT(
-        &netAdapterConfig,
-        I219vEvtAdapterCreateRxQueue,
-        I219vEvtAdapterCreateTxQueue
-    );
-
-    // Настройка обработчиков событий
-    netAdapterConfig.EvtAdapterSetCapabilities = I219vEvtAdapterSetCapabilities;
-    netAdapterConfig.EvtAdapterStart = I219vEvtAdapterStart;
-    netAdapterConfig.EvtAdapterStop = I219vEvtAdapterStop;
-    netAdapterConfig.EvtAdapterPause = I219vEvtAdapterPause;
-    netAdapterConfig.EvtAdapterRestart = I219vEvtAdapterRestart;
-    netAdapterConfig.EvtAdapterCreateTxQueue = I219vEvtAdapterCreateTxQueue;
-    netAdapterConfig.EvtAdapterCreateRxQueue = I219vEvtAdapterCreateRxQueue;
-
-    // Создание объекта NetAdapter
-    status = NetAdapterCreate(Device, &netAdapterConfig, &netAdapter);
-    if (!NT_SUCCESS(status)) {
-        TraceEvents(TRACE_LEVEL_ERROR, TRACE_ADAPTER, 
-                  "NetAdapterCreate failed %!STATUS!", status);
-        return status;
-    }
-
-    // Сохранение объекта NetAdapter в контексте устройства
-    deviceContext->NetAdapter = netAdapter;
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_ADAPTER, "NetAdapter created successfully");
-    return STATUS_SUCCESS;
-}
-
-// Обработчик установки возможностей адаптера
-VOID
-I219vEvtAdapterSetCapabilities(
-    _In_ NETADAPTER NetAdapter
-    )
-{
-    NTSTATUS status;
-    PI219V_DEVICE_CONTEXT deviceContext;
-    NET_ADAPTER_LINK_LAYER_CAPABILITIES linkLayerCapabilities;
-    NET_ADAPTER_LINK_LAYER_ADDRESS linkLayerAddress;
-    NET_ADAPTER_POWER_CAPABILITIES powerCapabilities;
-    NET_ADAPTER_DMA_CAPABILITIES dmaCapabilities;
-    NET_ADAPTER_RECEIVE_CAPABILITIES receiveCapabilities;
-    NET_ADAPTER_RECEIVE_FILTER_CAPABILITIES receiveFilterCapabilities;
-    NET_ADAPTER_OFFLOAD_CAPABILITIES offloadCapabilities;
-    WDFDEVICE device;
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_ADAPTER, "Setting NetAdapter capabilities");
-
-    device = NetAdapterGetWdfDevice(NetAdapter);
-    deviceContext = I219vGetDeviceContext(device);
-
-    // Настройка возможностей канального уровня
-    NET_ADAPTER_LINK_LAYER_CAPABILITIES_INIT(
-        &linkLayerCapabilities, 
-        I219V_MAX_LINK_SPEED, 
-        I219V_MIN_LINK_SPEED
-    );
-    
-    // Добавление поддерживаемых скоростей соединения
-    NetAdapterLinkLayerCapabilitiesAddLinkSpeed(&linkLayerCapabilities, NDIS_LINK_SPEED_1000MBPS);
-    NetAdapterLinkLayerCapabilitiesAddLinkSpeed(&linkLayerCapabilities, NDIS_LINK_SPEED_100MBPS);
-    NetAdapterLinkLayerCapabilitiesAddLinkSpeed(&linkLayerCapabilities, NDIS_LINK_SPEED_10MBPS);
-    
-    // Установка режимов дуплекса
-    NetAdapterLinkLayerCapabilitiesAddMediaDuplexState(&linkLayerCapabilities, MediaDuplexStateFull);
-    NetAdapterLinkLayerCapabilitiesAddMediaDuplexState(&linkLayerCapabilities, MediaDuplexStateHalf);
-    
-    // Установка возможностей канального уровня
-    status = NetAdapterSetLinkLayerCapabilities(NetAdapter, &linkLayerCapabilities);
-    if (!NT_SUCCESS(status)) {
-        TraceEvents(TRACE_LEVEL_ERROR, TRACE_ADAPTER, 
-                  "NetAdapterSetLinkLayerCapabilities failed %!STATUS!", status);
-        return;
-    }
-
-    // Установка MAC-адреса
-    NET_ADAPTER_LINK_LAYER_ADDRESS_INIT(
-        &linkLayerAddress, 
-        deviceContext->MacAddress, 
-        sizeof(deviceContext->MacAddress)
-    );
-    
-    status = NetAdapterSetCurrentLinkLayerAddress(NetAdapter, &linkLayerAddress);
-    if (!NT_SUCCESS(status)) {
-        TraceEvents(TRACE_LEVEL_ERROR, TRACE_ADAPTER, 
-                  "NetAdapterSetCurrentLinkLayerAddress failed %!STATUS!", status);
-        return;
-    }
-
-    // Настройка возможностей управления питанием
-    NET_ADAPTER_POWER_CAPABILITIES_INIT(&powerCapabilities);
-    
-    // Поддержка Wake-on-LAN
-    powerCapabilities.SupportedWakePatterns = NET_ADAPTER_WAKE_PATTERN_MAGIC_PACKET;
-    
-    status = NetAdapterSetPowerCapabilities(NetAdapter, &powerCapabilities);
-    if (!NT_SUCCESS(status)) {
-        TraceEvents(TRACE_LEVEL_ERROR, TRACE_ADAPTER, 
-                  "NetAdapterSetPowerCapabilities failed %!STATUS!", status);
-        return;
-    }
-
-    // Настройка возможностей DMA
-    NET_ADAPTER_DMA_CAPABILITIES_INIT(&dmaCapabilities);
-    
-    // Установка возможностей DMA
-    status = NetAdapterSetDataPathCapabilities(NetAdapter, &dmaCapabilities);
-    if (!NT_SUCCESS(status)) {
-        TraceEvents(TRACE_LEVEL_ERROR, TRACE_ADAPTER, 
-                  "NetAdapterSetDataPathCapabilities failed %!STATUS!", status);
-        return;
-    }
-
-    // Настройка возможностей приема
-    NET_ADAPTER_RECEIVE_CAPABILITIES_INIT(&receiveCapabilities);
-    
-    // Установка максимального размера пакета
-    receiveCapabilities.MaximumFrameSize = I219V_MAX_PACKET_SIZE;
-    
-    status = NetAdapterSetReceiveCapabilities(NetAdapter, &receiveCapabilities);
-    if (!NT_SUCCESS(status)) {
-        TraceEvents(TRACE_LEVEL_ERROR, TRACE_ADAPTER, 
-                  "NetAdapterSetReceiveCapabilities failed %!STATUS!", status);
-        return;
-    }
-
-    // Настройка возможностей фильтрации приема
-    NET_ADAPTER_RECEIVE_FILTER_CAPABILITIES_INIT(&receiveFilterCapabilities);
-    
-    // Поддержка фильтрации по MAC-адресу
-    receiveFilterCapabilities.SupportedPacketFilters = 
-        NET_PACKET_FILTER_TYPE_DIRECTED |
-        NET_PACKET_FILTER_TYPE_MULTICAST |
-        NET_PACKET_FILTER_TYPE_BROADCAST |
-        NET_PACKET_FILTER_TYPE_PROMISCUOUS |
-        NET_PACKET_FILTER_TYPE_ALL_MULTICAST;
-    
-    // Максимальное количество мультикаст-адресов
-    receiveFilterCapabilities.MaximumMulticastAddresses = 16;
-    
-    status = NetAdapterSetReceiveFilterCapabilities(NetAdapter, &receiveFilterCapabilities);
-    if (!NT_SUCCESS(status)) {
-        TraceEvents(TRACE_LEVEL_ERROR, TRACE_ADAPTER, 
-                  "NetAdapterSetReceiveFilterCapabilities failed %!STATUS!", status);
-        return;
-    }
-
-    // Настройка возможностей аппаратных оффлоадов
-    NET_ADAPTER_OFFLOAD_CAPABILITIES_INIT(&offloadCapabilities);
-    
-    // Поддержка оффлоада контрольной суммы
-    offloadCapabilities.Checksum.IPv4 = NET_ADAPTER_OFFLOAD_SUPPORTED;
-    offloadCapabilities.Checksum.Tcp = NET_ADAPTER_OFFLOAD_SUPPORTED;
-    offloadCapabilities.Checksum.Udp = NET_ADAPTER_OFFLOAD_SUPPORTED;
-    
-    // Поддержка оффлоада сегментации TCP
-    offloadCapabilities.LargeSendOffload.IPv4 = NET_ADAPTER_OFFLOAD_SUPPORTED;
-    
-    status = NetAdapterOffloadSetCapabilities(NetAdapter, &offloadCapabilities);
-    if (!NT_SUCCESS(status)) {
-        TraceEvents(TRACE_LEVEL_ERROR, TRACE_ADAPTER, 
-                  "NetAdapterOffloadSetCapabilities failed %!STATUS!", status);
-        return;
-    }
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_ADAPTER, "NetAdapter capabilities set successfully");
-}
-
-// Обработчик запуска адаптера
-VOID
-I219vEvtAdapterStart(
-    _In_ NETADAPTER NetAdapter
-    )
-{
-    NTSTATUS status;
-    PI219V_DEVICE_CONTEXT deviceContext;
-    NET_ADAPTER_LINK_STATE linkState;
-    UINT32 statusReg;
-    WDFDEVICE device;
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_ADAPTER, "Starting NetAdapter");
-
-    device = NetAdapterGetWdfDevice(NetAdapter);
-    deviceContext = I219vGetDeviceContext(device);
-
-    // Инициализация путей данных
-    status = I219vInitializeDatapath(deviceContext);
-    if (!NT_SUCCESS(status)) {
-        TraceEvents(TRACE_LEVEL_ERROR, TRACE_ADAPTER, 
-                  "I219vInitializeDatapath failed %!STATUS!", status);
-        return;
-    }
-
-    // Инициализация прерываний
-    status = I219vInitializeInterrupt(device);
-    if (!NT_SUCCESS(status)) {
-        TraceEvents(TRACE_LEVEL_ERROR, TRACE_ADAPTER, 
-                  "I219vInitializeInterrupt failed %!STATUS!", status);
-        I219vCleanupDatapath(deviceContext);
-        return;
-    }
-
-    // Включение устройства
-    I219vEnableDevice(deviceContext);
-
-    // Проверка состояния соединения
-    statusReg = I219vReadRegister(deviceContext, I219V_REG_STATUS);
-    
-    if (statusReg & I219V_STATUS_LU) {
-        // Соединение установлено
-        NET_ADAPTER_LINK_STATE_INIT(
-            &linkState,
-            NDIS_LINK_SPEED_1000MBPS,
-            MediaConnectStateConnected,
-            MediaDuplexStateFull,
-            NetAdapterPauseFunctionTypeUnsupported,
-            NetAdapterAutoNegotiationFlagXmitLinkSpeed |
-            NetAdapterAutoNegotiationFlagRcvLinkSpeed |
-            NetAdapterAutoNegotiationFlagDuplexMode
-        );
-    } else {
-        // Соединение отсутствует
-        NET_ADAPTER_LINK_STATE_INIT_DISCONNECTED(&linkState);
-    }
-    
-    // Уведомление об изменении состояния соединения
-    NetAdapterSetLinkState(NetAdapter, &linkState);
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_ADAPTER, "NetAdapter started successfully");
-}
-
-// Обработчик остановки адаптера
-VOID
-I219vEvtAdapterStop(
-    _In_ NETADAPTER NetAdapter
-    )
-{
-    PI219V_DEVICE_CONTEXT deviceContext;
-    WDFDEVICE device;
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_ADAPTER, "Stopping NetAdapter");
-
-    device = NetAdapterGetWdfDevice(NetAdapter);
-    deviceContext = I219vGetDeviceContext(device);
-
-    // Отключение устройства
-    I219vDisableDevice(deviceContext);
-
-    // Очистка ресурсов путей данных
-    I219vCleanupDatapath(deviceContext);
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_ADAPTER, "NetAdapter stopped");
-}
-
-// Обработчик приостановки адаптера
-VOID
-I219vEvtAdapterPause(
-    _In_ NETADAPTER NetAdapter
-    )
-{
-    PI219V_DEVICE_CONTEXT deviceContext;
-    WDFDEVICE device;
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_ADAPTER, "Pausing NetAdapter");
-
-    device = NetAdapterGetWdfDevice(NetAdapter);
-    deviceContext = I219vGetDeviceContext(device);
-
-    // Приостановка устройства
-    I219vPauseDevice(deviceContext);
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_ADAPTER, "NetAdapter paused");
-}
-
-// Обработчик возобновления работы адаптера
-VOID
-I219vEvtAdapterRestart(
-    _In_ NETADAPTER NetAdapter
-    )
-{
-    PI219V_DEVICE_CONTEXT deviceContext;
-    WDFDEVICE device;
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_ADAPTER, "Restarting NetAdapter");
-
-    device = NetAdapterGetWdfDevice(NetAdapter);
-    deviceContext = I219vGetDeviceContext(device);
-
-    // Возобновление работы устройства
-    I219vRestartDevice(deviceContext);
-
-    TraceEvents(TRACE_LEVEL_INFORMATION, TRACE_ADAPTER, "NetAdapter restarted");
-}
+// The functions I219vEnableDevice, I219vDisableDevice, I219vPauseDevice, I219vRestartDevice
+// were called from the EvtAdapterXXX handlers that were in this file.
+// These are HW manipulation functions, likely implemented in i219v_hw.c and declared in Adapter.h or i219v_hw.h.
+// The consolidated EvtAdapterXXX handlers in Adapter.c will continue to call them as appropriate.

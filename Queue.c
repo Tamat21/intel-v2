@@ -43,10 +43,15 @@ I219vEvtTxQueueAdvance(
     NET_RING* packetRing = rings->Rings[NET_RING_TYPE_PACKET];
     NET_RING* fragmentRing = rings->Rings[NET_RING_TYPE_FRAGMENT];
     UINT32 packetIndex = packetRing->BeginIndex;
-    BOOLEAN prioritizationEnabled = deviceContext->TrafficPrioritizationEnabled;
-    BOOLEAN latencyReductionEnabled = deviceContext->LatencyReductionEnabled;
+    BOOLEAN prioritizationEnabled;
+    BOOLEAN latencyReductionEnabled;
 
     TraceEvents(TRACE_LEVEL_VERBOSE, TRACE_QUEUE, "TX Queue Advance");
+
+    WdfSpinLockAcquire(deviceContext->GamingSettingsLock);
+
+    prioritizationEnabled = deviceContext->TrafficPrioritizationEnabled;
+    latencyReductionEnabled = deviceContext->LatencyReductionEnabled;
 
     // Обработка всех пакетов в очереди
     while (packetIndex != packetRing->EndIndex)
@@ -57,14 +62,20 @@ I219vEvtTxQueueAdvance(
         BOOLEAN isHighPriority = FALSE;
 
         // Если включена приоритизация трафика, определяем приоритет пакета
+        // Все доступы к deviceContext->GamingPerformanceStats и другим счетчикам
+        // теперь защищены одним внешним WdfSpinLockAcquire/Release.
         if (prioritizationEnabled)
         {
             // Анализ пакета для определения типа трафика
             if (I219vIsGamingTraffic((PNET_PACKET)packet))
             {
+                NTSTATUS PrioStatus;
                 // Установка высокого приоритета для игрового трафика
                 isHighPriority = TRUE;
-                I219vSetPacketPriority(deviceContext, (PNET_PACKET)packet, I219V_TRAFFIC_PRIORITY_HIGHEST);
+                PrioStatus = I219vSetPacketPriority(deviceContext, (PNET_PACKET)packet, I219V_TRAFFIC_PRIORITY_HIGHEST);
+                if (!NT_SUCCESS(PrioStatus)) {
+                    TraceEvents(TRACE_LEVEL_WARNING, TRACE_QUEUE, "I219vSetPacketPriority (Highest) failed: %!STATUS!", PrioStatus);
+                }
                 deviceContext->GamingPerformanceStats.HighPriorityPacketsSent++;
                 deviceContext->GameTrafficCount++;
             }
@@ -72,20 +83,29 @@ I219vEvtTxQueueAdvance(
             {
                 // Установка высокого приоритета для голосового трафика
                 isHighPriority = TRUE;
-                I219vSetPacketPriority(deviceContext, (PNET_PACKET)packet, I219V_TRAFFIC_PRIORITY_HIGH);
+                PrioStatus = I219vSetPacketPriority(deviceContext, (PNET_PACKET)packet, I219V_TRAFFIC_PRIORITY_HIGH);
+                if (!NT_SUCCESS(PrioStatus)) {
+                    TraceEvents(TRACE_LEVEL_WARNING, TRACE_QUEUE, "I219vSetPacketPriority (High) failed: %!STATUS!", PrioStatus);
+                }
                 deviceContext->GamingPerformanceStats.HighPriorityPacketsSent++;
                 deviceContext->VoiceTrafficCount++;
             }
             else if (I219vIsStreamingTraffic((PNET_PACKET)packet))
             {
                 // Установка среднего приоритета для стримингового трафика
-                I219vSetPacketPriority(deviceContext, (PNET_PACKET)packet, I219V_TRAFFIC_PRIORITY_MEDIUM);
+                PrioStatus = I219vSetPacketPriority(deviceContext, (PNET_PACKET)packet, I219V_TRAFFIC_PRIORITY_MEDIUM);
+                if (!NT_SUCCESS(PrioStatus)) {
+                    TraceEvents(TRACE_LEVEL_WARNING, TRACE_QUEUE, "I219vSetPacketPriority (Medium) failed: %!STATUS!", PrioStatus);
+                }
                 deviceContext->StreamingTrafficCount++;
             }
             else
             {
                 // Установка низкого приоритета для фонового трафика
-                I219vSetPacketPriority(deviceContext, (PNET_PACKET)packet, I219V_TRAFFIC_PRIORITY_LOW);
+                PrioStatus = I219vSetPacketPriority(deviceContext, (PNET_PACKET)packet, I219V_TRAFFIC_PRIORITY_LOW);
+                if (!NT_SUCCESS(PrioStatus)) {
+                    TraceEvents(TRACE_LEVEL_WARNING, TRACE_QUEUE, "I219vSetPacketPriority (Low) failed: %!STATUS!", PrioStatus);
+                }
                 deviceContext->BackgroundTrafficCount++;
             }
         }
@@ -132,8 +152,8 @@ I219vEvtRxQueueAdvance(
     NET_RING* packetRing = rings->Rings[NET_RING_TYPE_PACKET];
     NET_RING* fragmentRing = rings->Rings[NET_RING_TYPE_FRAGMENT];
     UINT32 packetIndex = packetRing->BeginIndex;
-    BOOLEAN prioritizationEnabled = deviceContext->TrafficPrioritizationEnabled;
-    BOOLEAN latencyReductionEnabled = deviceContext->LatencyReductionEnabled;
+    BOOLEAN prioritizationEnabled;
+    BOOLEAN latencyReductionEnabled;
 
     TraceEvents(TRACE_LEVEL_VERBOSE, TRACE_QUEUE, "RX Queue Advance");
 
@@ -145,6 +165,11 @@ I219vEvtRxQueueAdvance(
         return;
     }
 
+    WdfSpinLockAcquire(deviceContext->GamingSettingsLock);
+
+    prioritizationEnabled = deviceContext->TrafficPrioritizationEnabled;
+    latencyReductionEnabled = deviceContext->LatencyReductionEnabled;
+
     // В реальной реализации здесь бы выполнялся прием пакетов из аппаратных буферов
     // и заполнение колец пакетов и фрагментов
 
@@ -152,6 +177,8 @@ I219vEvtRxQueueAdvance(
     deviceContext->GamingPerformanceStats.TotalPacketsReceived++;
 
     // Если включена приоритизация трафика, обрабатываем принятые пакеты
+    // Все доступы к deviceContext->GamingPerformanceStats и другим счетчикам
+    // теперь защищены одним внешним WdfSpinLockAcquire/Release.
     if (prioritizationEnabled)
     {
         // Обработка всех принятых пакетов
@@ -199,6 +226,8 @@ I219vEvtRxQueueAdvance(
         }
     }
 
+    WdfSpinLockRelease(deviceContext->GamingSettingsLock);
+
     // Обновление указателей очереди
     packetRing->EndIndex = packetRing->NextIndex;
     fragmentRing->EndIndex = fragmentRing->NextIndex;
@@ -238,7 +267,11 @@ I219vEvtCreateTxQueue(
     }
 
     // Если включена приоритизация трафика, настраиваем очередь для поддержки приоритетов
-    if (deviceContext->TrafficPrioritizationEnabled) {
+    BOOLEAN trafficPrioritizationForQueueSetup;
+    WdfSpinLockAcquire(deviceContext->GamingSettingsLock);
+    trafficPrioritizationForQueueSetup = deviceContext->TrafficPrioritizationEnabled;
+    WdfSpinLockRelease(deviceContext->GamingSettingsLock);
+    if (trafficPrioritizationForQueueSetup) {
         // В реальной реализации здесь бы выполнялась настройка очереди для поддержки приоритетов
         // Например, создание нескольких физических очередей с разными приоритетами
     }
@@ -281,7 +314,11 @@ I219vEvtCreateRxQueue(
     }
 
     // Если включена приоритизация трафика, настраиваем очередь для поддержки приоритетов
-    if (deviceContext->TrafficPrioritizationEnabled) {
+    BOOLEAN trafficPrioritizationForQueueSetup;
+    WdfSpinLockAcquire(deviceContext->GamingSettingsLock);
+    trafficPrioritizationForQueueSetup = deviceContext->TrafficPrioritizationEnabled;
+    WdfSpinLockRelease(deviceContext->GamingSettingsLock);
+    if (trafficPrioritizationForQueueSetup) {
         // В реальной реализации здесь бы выполнялась настройка очереди для поддержки приоритетов
         // Например, создание нескольких физических очередей с разными приоритетами
     }

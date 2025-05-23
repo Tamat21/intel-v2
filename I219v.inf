@@ -42,7 +42,7 @@ HKR, Ndi\params\*PriorityVLANTag,                 ParamDesc,      0, "Priority &
 HKR, Ndi\params\*PriorityVLANTag,                 default,        0, "3"
 HKR, Ndi\params\*PriorityVLANTag,                 type,           0, "enum"
 HKR, Ndi\params\*PriorityVLANTag\enum,            "0",            0, "Priority & VLAN Disabled"
-HKR, Ndi\params\*PriorityVLANTag\enum,            "1",            0, "Priority & VLAN Enabled"
+HKR, Ndi\params\*PriorityVLANTag\enum,            "1",            0, "VLAN Enabled"
 HKR, Ndi\params\*PriorityVLANTag\enum,            "2",            0, "Priority Enabled"
 HKR, Ndi\params\*PriorityVLANTag\enum,            "3",            0, "Priority & VLAN Enabled"
 
