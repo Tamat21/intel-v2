@@ -29,9 +29,10 @@ EVT_WDF_DEVICE_RELEASE_HARDWARE I219vEvtDeviceReleaseHardware;
 EVT_WDF_DEVICE_D0_ENTRY I219vEvtDeviceD0Entry;
 EVT_WDF_DEVICE_D0_EXIT I219vEvtDeviceD0Exit;
 
-// Объявление функций для работы с адаптером
-EVT_NET_ADAPTER_CREATE_TXQUEUE I219vEvtAdapterCreateTxQueue;
-EVT_NET_ADAPTER_CREATE_RXQUEUE I219vEvtAdapterCreateRxQueue;
+// Объявление функций для работы с адаптером (основные коллбэки жизненного цикла)
+// Реализации этих функций находятся в Adapter.c
+// EVT_NET_ADAPTER_CREATE_TXQUEUE and EVT_NET_ADAPTER_CREATE_RXQUEUE are implemented in Queue.c
+// and registered directly in Driver.c. Removing their declarations from here to avoid confusion.
 EVT_NET_ADAPTER_SET_CAPABILITIES I219vEvtAdapterSetCapabilities;
 EVT_NET_ADAPTER_START I219vEvtAdapterStart;
 EVT_NET_ADAPTER_STOP I219vEvtAdapterStop;

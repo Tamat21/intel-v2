@@ -137,7 +137,9 @@ I219vApplyGamingProfile(
               GamingProfile->EnableBandwidthControl);
 
     // Сохранение профиля в контексте устройства
+    WdfSpinLockAcquire(DeviceContext->GamingSettingsLock);
     RtlCopyMemory(&DeviceContext->GamingProfile, GamingProfile, sizeof(I219V_GAMING_PROFILE));
+    WdfSpinLockRelease(DeviceContext->GamingSettingsLock);
 
     // Применение настроек приоритизации трафика
     status = I219vEnableTrafficPrioritization(DeviceContext, GamingProfile->EnableTrafficPrioritization);
@@ -229,7 +231,9 @@ I219vEnableTrafficPrioritization(
               Enable ? "Enabling" : "Disabling");
 
     // Сохранение настройки в контексте устройства
+    WdfSpinLockAcquire(DeviceContext->GamingSettingsLock);
     DeviceContext->TrafficPrioritizationEnabled = Enable;
+    WdfSpinLockRelease(DeviceContext->GamingSettingsLock);
 
     if (Enable) {
         // Чтение текущих значений регистров управления передачей и приемом
@@ -281,59 +285,58 @@ I219vEnableLatencyReduction(
               Enable ? "Enabling" : "Disabling");
 
     // Сохранение настройки в контексте устройства
+    WdfSpinLockAcquire(DeviceContext->GamingSettingsLock);
     DeviceContext->LatencyReductionEnabled = Enable;
+    WdfSpinLockRelease(DeviceContext->GamingSettingsLock);
 
+    // ITR settings are now handled by I219vOptimizeInterruptsForGaming based on InterruptModeration value.
+    // This function, I219vEnableLatencyReduction, will now primarily focus on setting the
+    // LatencyReductionEnabled flag, which might influence other (non-ITR) optimizations.
+    // For example, descriptor thresholds could be adjusted here if they are not part of I219vOptimizeBuffersForGaming.
+
+    // Minimal descriptor thresholds are generally good for latency.
+    // This logic can remain or be moved to a profile application function.
+    // For now, let's keep it here as an explicit action of "LatencyReduction".
     if (Enable) {
-        // Чтение текущих значений регистров
         ctrl = I219vReadRegister(DeviceContext, I219V_REG_CTRL);
         rxdctl = I219vReadRegister(DeviceContext, I219V_REG_RXDCTL);
         txdctl = I219vReadRegister(DeviceContext, I219V_REG_TXDCTL);
 
-        // Модификация регистров для снижения задержки
-        // Отключение модерации прерываний для минимальной задержки
-        ctrl &= ~I219V_CTRL_ITR_ENABLE;
-        
-        // Настройка порогов дескрипторов для быстрой обработки
+        // Ensure ITR is enabled so that ITR register value takes effect if not 0
+        // If ITR is 0 (for latency), ITR_ENABLE bit state doesn't matter as much.
+        // ctrl |= I219V_CTRL_ITR_ENABLE; // This will be handled by I219vOptimizeInterruptsForGaming
+
         rxdctl &= ~I219V_RXDCTL_PTHRESH_MASK;
-        rxdctl |= (1 << I219V_RXDCTL_PTHRESH_SHIFT); // Минимальный порог
+        rxdctl |= (1 << I219V_RXDCTL_PTHRESH_SHIFT); // Minimal threshold
         
         txdctl &= ~I219V_TXDCTL_PTHRESH_MASK;
-        txdctl |= (1 << I219V_TXDCTL_PTHRESH_SHIFT); // Минимальный порог
+        txdctl |= (1 << I219V_TXDCTL_PTHRESH_SHIFT); // Minimal threshold
 
-        // Запись модифицированных значений
-        I219vWriteRegister(DeviceContext, I219V_REG_CTRL, ctrl);
         I219vWriteRegister(DeviceContext, I219V_REG_RXDCTL, rxdctl);
         I219vWriteRegister(DeviceContext, I219V_REG_TXDCTL, txdctl);
-        
-        // Установка минимальной задержки прерываний
-        I219vWriteRegister(DeviceContext, I219V_REG_ITR, 0); // 0 = минимальная задержка
+        // I219vWriteRegister(DeviceContext, I219V_REG_CTRL, ctrl); // CTRL write deferred to I219vOptimizeInterruptsForGaming
     } else {
-        // Чтение текущих значений регистров
-        ctrl = I219vReadRegister(DeviceContext, I219V_REG_CTRL);
+        // Restore default/balanced descriptor thresholds
         rxdctl = I219vReadRegister(DeviceContext, I219V_REG_RXDCTL);
         txdctl = I219vReadRegister(DeviceContext, I219V_REG_TXDCTL);
 
-        // Модификация регистров для стандартной задержки
-        // Включение модерации прерываний
-        ctrl |= I219V_CTRL_ITR_ENABLE;
-        
-        // Настройка стандартных порогов дескрипторов
         rxdctl &= ~I219V_RXDCTL_PTHRESH_MASK;
-        rxdctl |= (8 << I219V_RXDCTL_PTHRESH_SHIFT); // Стандартный порог
+        rxdctl |= (8 << I219V_RXDCTL_PTHRESH_SHIFT); // Default threshold
         
         txdctl &= ~I219V_TXDCTL_PTHRESH_MASK;
-        txdctl |= (8 << I219V_TXDCTL_PTHRESH_SHIFT); // Стандартный порог
-
-        // Запись модифицированных значений
-        I219vWriteRegister(DeviceContext, I219V_REG_CTRL, ctrl);
+        txdctl |= (8 << I219V_TXDCTL_PTHRESH_SHIFT); // Default threshold
+        
         I219vWriteRegister(DeviceContext, I219V_REG_RXDCTL, rxdctl);
         I219vWriteRegister(DeviceContext, I219V_REG_TXDCTL, txdctl);
-        
-        // Установка стандартной задержки прерываний
-        I219vWriteRegister(DeviceContext, I219V_REG_ITR, 128); // Стандартная задержка
     }
 
-    return STATUS_SUCCESS;
+    // Actual ITR value and ITR_ENABLE bit in CTRL is managed by I219vOptimizeInterruptsForGaming.
+    // Call it to apply the current InterruptModeration value.
+    status = I219vOptimizeInterruptsForGaming(DeviceContext);
+    if (!NT_SUCCESS(status)) {
+         TraceEvents(TRACE_LEVEL_WARNING, TRACE_DRIVER, "Failed to apply interrupt settings via I219vOptimizeInterruptsForGaming: %!STATUS!", status);
+    }
+    return status; // Return status from I219vOptimizeInterruptsForGaming
 }
 
 // Включение/отключение контроля пропускной способности
@@ -347,7 +350,9 @@ I219vEnableBandwidthControl(
               Enable ? "Enabling" : "Disabling");
 
     // Сохранение настройки в контексте устройства
+    WdfSpinLockAcquire(DeviceContext->GamingSettingsLock);
     DeviceContext->BandwidthControlEnabled = Enable;
+    WdfSpinLockRelease(DeviceContext->GamingSettingsLock);
 
     // Контроль пропускной способности в основном реализуется на уровне пользовательского режима
     // На уровне драйвера мы только включаем/отключаем поддержку QoS
@@ -375,7 +380,9 @@ I219vEnableSmartPowerManagement(
               Enable ? "Enabling" : "Disabling");
 
     // Сохранение настройки в контексте устройства
+    WdfSpinLockAcquire(DeviceContext->GamingSettingsLock);
     DeviceContext->SmartPowerManagementEnabled = Enable;
+    WdfSpinLockRelease(DeviceContext->GamingSettingsLock);
 
     // Чтение текущего значения регистра управления
     ctrl = I219vReadRegister(DeviceContext, I219V_REG_CTRL);
@@ -408,8 +415,14 @@ I219vSetPacketPriority(
     _In_ I219V_TRAFFIC_PRIORITY_LEVEL Priority
     )
 {
+    BOOLEAN trafficPrioritizationEnabled;
+
+    WdfSpinLockAcquire(DeviceContext->GamingSettingsLock);
+    trafficPrioritizationEnabled = DeviceContext->TrafficPrioritizationEnabled;
+
     // Проверка, включена ли приоритизация трафика
-    if (!DeviceContext->TrafficPrioritizationEnabled) {
+    if (!trafficPrioritizationEnabled) {
+        WdfSpinLockRelease(DeviceContext->GamingSettingsLock);
         return STATUS_SUCCESS;
     }
 
@@ -421,6 +434,7 @@ I219vSetPacketPriority(
     if (Priority == I219V_TRAFFIC_PRIORITY_HIGHEST || Priority == I219V_TRAFFIC_PRIORITY_HIGH) {
         DeviceContext->GamingPerformanceStats.HighPriorityPacketsSent++;
     }
+    WdfSpinLockRelease(DeviceContext->GamingSettingsLock);
 
     return STATUS_SUCCESS;
 }
@@ -471,33 +485,43 @@ I219vOptimizeInterruptsForGaming(
     // Чтение текущего значения регистра управления
     ctrl = I219vReadRegister(DeviceContext, I219V_REG_CTRL);
 
-    // Настройка модерации прерываний в зависимости от профиля
-    if (DeviceContext->LatencyReductionEnabled) {
-        // Отключение модерации прерываний для минимальной задержки
-        ctrl &= ~I219V_CTRL_ITR_ENABLE;
-        
-        // Установка минимальной задержки прерываний
-        I219vWriteRegister(DeviceContext, I219V_REG_ITR, 0); // 0 = минимальная задержка
+    BOOLEAN latencyReductionEnabled;
+
+    WdfSpinLockAcquire(DeviceContext->GamingSettingsLock);
+    latencyReductionEnabled = DeviceContext->LatencyReductionEnabled;
+    // Копируем InterruptModeration, так как он используется после возможного Release
+    UINT32 interruptModeration = DeviceContext->InterruptModeration;
+    WdfSpinLockRelease(DeviceContext->GamingSettingsLock);
+
+    UINT32 interruptModerationValue; // Local copy of the setting from DeviceContext
+
+    WdfSpinLockAcquire(DeviceContext->GamingSettingsLock);
+    // Read the InterruptModeration value, which is expected to be set by gaming profiles (0-100)
+    interruptModerationValue = DeviceContext->InterruptModeration;
+    WdfSpinLockRelease(DeviceContext->GamingSettingsLock);
+
+    // Чтение текущего значения регистра управления
+    ctrl = I219vReadRegister(DeviceContext, I219V_REG_CTRL);
+
+    // Map the 0-100 scale to ITR register values (0-255 representing 0-1020 usec, or specific values)
+    // For simplicity, let's map 0 directly to ITR=0 (minimal/disabled), and scale others.
+    // A value of 0 for interruptModerationValue (from Competitive profile) means minimal latency.
+    if (interruptModerationValue == 0) { // Minimal latency profile
+        ctrl &= ~I219V_CTRL_ITR_ENABLE; // Disable ITR for very lowest latency (or ITR=0)
+        I219vWriteRegister(DeviceContext, I219V_REG_ITR, 0); 
     } else {
-        // Включение модерации прерываний с оптимальным значением для игр
-        ctrl |= I219V_CTRL_ITR_ENABLE;
-        
-        // Установка оптимальной задержки прерываний для игр
-        // Значение зависит от профиля и уровня модерации
+        ctrl |= I219V_CTRL_ITR_ENABLE; // Enable ITR mechanism
         UINT32 itrValue = 0;
-        
-        if (DeviceContext->InterruptModeration <= 20) {
-            itrValue = 0; // Минимальная задержка
-        } else if (DeviceContext->InterruptModeration <= 40) {
-            itrValue = 32; // Низкая задержка
-        } else if (DeviceContext->InterruptModeration <= 60) {
-            itrValue = 64; // Средняя задержка
-        } else if (DeviceContext->InterruptModeration <= 80) {
-            itrValue = 96; // Высокая задержка
-        } else {
-            itrValue = 128; // Максимальная задержка
+        // Scale 1-100 to hardware specific ITR values. Example scaling:
+        if (interruptModerationValue <= 20) { // Low latency
+            itrValue = 32;  // approx 12.8us if ITR unit is 0.25us, needs datasheet check for exact unit. Assuming 256 units = 256us for this hardware
+        } else if (interruptModerationValue <= 50) { // Balanced
+            itrValue = 64; 
+        } else if (interruptModerationValue <= 80) { // Higher throughput
+            itrValue = 96;
+        } else { // Max moderation
+            itrValue = 128; 
         }
-        
         I219vWriteRegister(DeviceContext, I219V_REG_ITR, itrValue);
     }
 
@@ -514,8 +538,10 @@ I219vGetGamingPerformanceStats(
     _Out_ PI219V_GAMING_PERFORMANCE_STATS PerformanceStats
     )
 {
+    WdfSpinLockAcquire(DeviceContext->GamingSettingsLock);
     // Копирование статистики из контекста устройства
     RtlCopyMemory(PerformanceStats, &DeviceContext->GamingPerformanceStats, sizeof(I219V_GAMING_PERFORMANCE_STATS));
+    WdfSpinLockRelease(DeviceContext->GamingSettingsLock);
 
     return STATUS_SUCCESS;
 }
