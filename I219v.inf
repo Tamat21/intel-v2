@@ -1,0 +1,174 @@
+;
+; I219v.inf
+;
+; Installation Information File for Intel i219-v Gaming Driver
+; Copyright (c) 2025 Manus AI
+;
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = Net
+ClassGUID   = {4d36e972-e325-11ce-bfc1-08002be10318}
+Provider    = %ManufacturerName%
+CatalogFile = I219v.cat
+DriverVer   = 05/22/2025,1.0.0.0
+PnpLockdown = 1
+
+[Manufacturer]
+%ManufacturerName% = Standard,NTamd64
+
+[Standard.NTamd64]
+%DeviceName% = I219v_Install, PCI\VEN_8086&DEV_15F2 ; Intel i219-V
+
+[I219v_Install.NT]
+AddReg          = I219v_AddReg
+Characteristics = 0x84 ; NCF_PHYSICAL, NCF_HAS_UI
+BusType         = 5    ; PCI
+*IfType         = 6    ; IF_TYPE_ETHERNET_CSMACD
+*MediaType      = 0    ; NdisMedium802_3
+*PhysicalMediaType = 14 ; NdisPhysicalMedium802_3
+
+CopyFiles       = I219v_CopyFiles
+
+[I219v_Install.NT.HW]
+AddReg          = I219v_HW_AddReg
+
+[I219v_Install.NT.Services]
+AddService      = I219v, 2, I219v_Service_Install, I219v_EventLog_Install
+
+[I219v_AddReg]
+; Gaming Optimization Settings
+HKR, Ndi\params\*PriorityVLANTag,                 ParamDesc,      0, "Priority & VLAN"
+HKR, Ndi\params\*PriorityVLANTag,                 default,        0, "3"
+HKR, Ndi\params\*PriorityVLANTag,                 type,           0, "enum"
+HKR, Ndi\params\*PriorityVLANTag\enum,            "0",            0, "Priority & VLAN Disabled"
+HKR, Ndi\params\*PriorityVLANTag\enum,            "1",            0, "Priority & VLAN Enabled"
+HKR, Ndi\params\*PriorityVLANTag\enum,            "2",            0, "Priority Enabled"
+HKR, Ndi\params\*PriorityVLANTag\enum,            "3",            0, "Priority & VLAN Enabled"
+
+; Gaming Profile
+HKR, Ndi\params\GamingProfile,                    ParamDesc,      0, "Gaming Profile"
+HKR, Ndi\params\GamingProfile,                    default,        0, "0"
+HKR, Ndi\params\GamingProfile,                    type,           0, "enum"
+HKR, Ndi\params\GamingProfile\enum,               "0",            0, "Balanced"
+HKR, Ndi\params\GamingProfile\enum,               "1",            0, "Competitive"
+HKR, Ndi\params\GamingProfile\enum,               "2",            0, "Streaming"
+HKR, Ndi\params\GamingProfile\enum,               "3",            0, "Custom"
+
+; Traffic Prioritization
+HKR, Ndi\params\TrafficPrioritization,            ParamDesc,      0, "Traffic Prioritization"
+HKR, Ndi\params\TrafficPrioritization,            default,        0, "1"
+HKR, Ndi\params\TrafficPrioritization,            type,           0, "enum"
+HKR, Ndi\params\TrafficPrioritization\enum,       "0",            0, "Disabled"
+HKR, Ndi\params\TrafficPrioritization\enum,       "1",            0, "Enabled"
+
+; Latency Reduction
+HKR, Ndi\params\LatencyReduction,                 ParamDesc,      0, "Latency Reduction"
+HKR, Ndi\params\LatencyReduction,                 default,        0, "1"
+HKR, Ndi\params\LatencyReduction,                 type,           0, "enum"
+HKR, Ndi\params\LatencyReduction\enum,            "0",            0, "Disabled"
+HKR, Ndi\params\LatencyReduction\enum,            "1",            0, "Enabled"
+
+; Bandwidth Control
+HKR, Ndi\params\BandwidthControl,                 ParamDesc,      0, "Bandwidth Control"
+HKR, Ndi\params\BandwidthControl,                 default,        0, "1"
+HKR, Ndi\params\BandwidthControl,                 type,           0, "enum"
+HKR, Ndi\params\BandwidthControl\enum,            "0",            0, "Disabled"
+HKR, Ndi\params\BandwidthControl\enum,            "1",            0, "Enabled"
+
+; Smart Power Management
+HKR, Ndi\params\SmartPowerManagement,             ParamDesc,      0, "Smart Power Management"
+HKR, Ndi\params\SmartPowerManagement,             default,        0, "1"
+HKR, Ndi\params\SmartPowerManagement,             type,           0, "enum"
+HKR, Ndi\params\SmartPowerManagement\enum,        "0",            0, "Disabled"
+HKR, Ndi\params\SmartPowerManagement\enum,        "1",            0, "Enabled"
+
+; Interrupt Moderation
+HKR, Ndi\params\InterruptModeration,              ParamDesc,      0, "Interrupt Moderation"
+HKR, Ndi\params\InterruptModeration,              default,        0, "50"
+HKR, Ndi\params\InterruptModeration,              type,           0, "int"
+HKR, Ndi\params\InterruptModeration,              min,            0, "0"
+HKR, Ndi\params\InterruptModeration,              max,            0, "100"
+HKR, Ndi\params\InterruptModeration,              step,           0, "10"
+
+; Receive Buffer Size
+HKR, Ndi\params\ReceiveBufferSize,                ParamDesc,      0, "Receive Buffer Size"
+HKR, Ndi\params\ReceiveBufferSize,                default,        0, "2048"
+HKR, Ndi\params\ReceiveBufferSize,                type,           0, "enum"
+HKR, Ndi\params\ReceiveBufferSize\enum,           "1024",         0, "1 KB"
+HKR, Ndi\params\ReceiveBufferSize\enum,           "2048",         0, "2 KB"
+HKR, Ndi\params\ReceiveBufferSize\enum,           "4096",         0, "4 KB"
+HKR, Ndi\params\ReceiveBufferSize\enum,           "8192",         0, "8 KB"
+HKR, Ndi\params\ReceiveBufferSize\enum,           "16384",        0, "16 KB"
+
+; Transmit Buffer Size
+HKR, Ndi\params\TransmitBufferSize,               ParamDesc,      0, "Transmit Buffer Size"
+HKR, Ndi\params\TransmitBufferSize,               default,        0, "2048"
+HKR, Ndi\params\TransmitBufferSize,               type,           0, "enum"
+HKR, Ndi\params\TransmitBufferSize\enum,          "1024",         0, "1 KB"
+HKR, Ndi\params\TransmitBufferSize\enum,          "2048",         0, "2 KB"
+HKR, Ndi\params\TransmitBufferSize\enum,          "4096",         0, "4 KB"
+HKR, Ndi\params\TransmitBufferSize\enum,          "8192",         0, "8 KB"
+HKR, Ndi\params\TransmitBufferSize\enum,          "16384",        0, "16 KB"
+
+; Standard NDIS Parameters
+HKR, Ndi\params\*SpeedDuplex,                     ParamDesc,      0, "Speed & Duplex"
+HKR, Ndi\params\*SpeedDuplex,                     default,        0, "0"
+HKR, Ndi\params\*SpeedDuplex,                     type,           0, "enum"
+HKR, Ndi\params\*SpeedDuplex\enum,                "0",            0, "Auto Negotiation"
+HKR, Ndi\params\*SpeedDuplex\enum,                "1",            0, "10 Mbps Half Duplex"
+HKR, Ndi\params\*SpeedDuplex\enum,                "2",            0, "10 Mbps Full Duplex"
+HKR, Ndi\params\*SpeedDuplex\enum,                "3",            0, "100 Mbps Half Duplex"
+HKR, Ndi\params\*SpeedDuplex\enum,                "4",            0, "100 Mbps Full Duplex"
+HKR, Ndi\params\*SpeedDuplex\enum,                "5",            0, "1.0 Gbps Full Duplex"
+
+HKR, Ndi\params\*FlowControl,                     ParamDesc,      0, "Flow Control"
+HKR, Ndi\params\*FlowControl,                     default,        0, "3"
+HKR, Ndi\params\*FlowControl,                     type,           0, "enum"
+HKR, Ndi\params\*FlowControl\enum,                "0",            0, "Disabled"
+HKR, Ndi\params\*FlowControl\enum,                "1",            0, "Tx Enabled"
+HKR, Ndi\params\*FlowControl\enum,                "2",            0, "Rx Enabled"
+HKR, Ndi\params\*FlowControl\enum,                "3",            0, "Tx & Rx Enabled"
+
+HKR, Ndi\params\*JumboPacket,                     ParamDesc,      0, "Jumbo Packet"
+HKR, Ndi\params\*JumboPacket,                     default,        0, "1514"
+HKR, Ndi\params\*JumboPacket,                     type,           0, "enum"
+HKR, Ndi\params\*JumboPacket\enum,                "1514",         0, "1514 Bytes"
+HKR, Ndi\params\*JumboPacket\enum,                "4088",         0, "4088 Bytes"
+HKR, Ndi\params\*JumboPacket\enum,                "9014",         0, "9014 Bytes"
+
+[I219v_HW_AddReg]
+HKR, , "GamingOptimized", 0x00010001, 1
+
+[I219v_Service_Install]
+DisplayName     = %ServiceName%
+ServiceType     = 1 ; SERVICE_KERNEL_DRIVER
+StartType       = 3 ; SERVICE_DEMAND_START
+ErrorControl    = 1 ; SERVICE_ERROR_NORMAL
+ServiceBinary   = %12%\I219v.sys
+LoadOrderGroup  = NDIS
+
+[I219v_EventLog_Install]
+AddReg = I219v_EventLog_AddReg
+
+[I219v_EventLog_AddReg]
+HKR, , EventMessageFile, 0x00020000, "%%SystemRoot%%\System32\netevent.dll"
+HKR, , TypesSupported,   0x00010001, 7
+
+[I219v_CopyFiles]
+I219v.sys
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+I219v.sys = 1,,
+
+[DestinationDirs]
+I219v_CopyFiles = 12 ; %windir%\system32\drivers
+
+[Strings]
+ManufacturerName = "Manus AI"
+DeviceName       = "Intel i219-V Gaming Network Adapter"
+ServiceName      = "Intel i219-V Gaming Driver Service"
+DiskName         = "Intel i219-V Gaming Driver Installation Disk"
